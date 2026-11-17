@@ -1,0 +1,166 @@
+# 코트메이트 (CourtMate) — React + Python FastAPI + MSSQL
+
+원본 ZIP의 **React 19 화면·디자인·자동/수동 대진·경기 기록·순위 기능을 유지**하면서 기존 Netlify/Hono/PostgreSQL API를 **Python FastAPI + Microsoft SQL Server**로 대체한 프로젝트입니다.
+
+> **중요 — 현재 버전은 비공개 개발·테스트용입니다.** 원본 프로젝트에 없던 로그인·역할별 권한 관리까지 완성된 것은 아닙니다. 회원 연락처와 모든 변경 API가 로그인 없이 접근 가능하므로 **인터넷에 그대로 공개하지 마세요**. 공개 운영 전 인증/인가·HTTPS·백업·보안 점검이 필수입니다.
+
+## Windows 개발/실행 빠른 시작
+
+Windows 설치·SSMS 초기화·Python/MSSQL 연결·자동/수동 테스트·React 빌드 후 단일 포트 실행에 관한 **상세 안내는 [`windows/WINDOWS_SETUP_AND_TEST.md`](windows/WINDOWS_SETUP_AND_TEST.md)** 를 확인하세요.
+
+```powershell
+# 프로젝트 루트에서, 각 단계 전 상세 가이드의 DB 설정을 먼저 완료하세요.
+.\windows\00_diagnostics.ps1
+.\windows\01_setup_dev.ps1
+.\windows\08_check_mssql_direct.ps1
+# 터미널 A: .\windows\02_start_backend_dev.ps1 
+# 터미널 B: .\windows\03_start_frontend_dev.ps1
+# 별도 터미널: .\windows\04_run_tests.ps1 -CheckLiveApi
+# 개발 서버를 종료한 뒤 로컬 빌드 모드:
+# .\windows\05_start_built_app_local.ps1 -Rebuild
+```
+
+`windows/07_live_crud_test.ps1 -AllowWrite`는 **실제 연결된 데이터베이스를 변경**하므로 반드시 폐기 가능한 개발 DB에서만 실행하세요. 운영 공개용 인증/권한 기능은 여전히 미구현입니다.
+
+## 1. 유지된 기능과 변경된 부분
+
+| 부분 | 변경 내용 |
+|---|---|
+| React UI (`src/App.tsx`, `src/views/*`, `src/styles.css`) | 원본 유지. 화면 구조·디자인 그대로 |
+| 대진 생성 (`src/pairing.ts`) | 원본 알고리즘 유지 |
+| 통계 (`src/stats.ts`) | 원본 유지 + `0:0`은 미진행으로 계산하도록 오류 수정 |
+| 순위 (`src/views/Ranking.tsx`) | 원본 유지 + 동률 조건의 공동 순위 표시 |
+| 대진 화면 (`src/views/Draw.tsx`) | 설정/참석자 변경 시 오래된 자동 대진표 저장 방지 |
+| 클라이언트 API (`src/api.ts`) | URL `/api/*` 유지, Python 서버 연결 및 중복 요청 키 추가 |
+| 점수 입력 (`src/views/Games.tsx`) | 기존 프리셋 유지 + 동시 수정 감지용 버전 전달 |
+| Hono/Netlify (`netlify/`, `db/`) | 런타임에서 제외, 원본은 `legacy/`에 보관 |
+| Python 백엔드 (`backend/app/`) | 기존 API 호환, 서버 검증·트랜잭션·점수 변경 이력 추가 |
+| MSSQL (`database/01_schema.sql`) | 회원·모임·경기 스키마 및 점수 이력 신규 생성 |
+
+**호환 API**: `GET/POST/PUT/DELETE /api/members`, `GET/POST/DELETE /api/sessions`, `GET/DELETE /api/matches`, `DELETE /api/sessions/{id}/rounds/{round}`, `PUT /api/matches/{id}/score`. 새 엔드포인트: `GET /api/health`, `GET /api/matches/{id}/history`, `GET /api/docs`.
+
+현재 점수 입력 범위는 원본 호환을 위해 **0~99**이며 원본 `7:6` 프리셋도 유지합니다. `0:0`은 저장할 수 있지만 **완료 경기와 순위 통계에서 제외**합니다. 최대 6점 제한처럼 운영 규칙을 변경하는 작업은 별도 정책 확정 후 UI와 API에 함께 적용해야 합니다.
+
+## 2. 시스템 요구 사항
+
+- Node.js 22 이상 + npm (React/Vite 실행)
+- Python 3.11 이상 (FastAPI 실행)
+- Microsoft SQL Server 2017 이상 (2019/2022 권장)
+- API 서버 머신에 Microsoft **ODBC Driver 18 for SQL Server** 설치
+- SQL Server Management Studio(SSMS) 또는 `sqlcmd` (DB 초기 생성)
+
+실행 중 **React 브라우저 → `/api` → Python FastAPI → SQLAlchemy/pyodbc → MSSQL** 흐름으로 통신합니다. 브라우저는 MSSQL에 직접 접속하지 않습니다.
+
+## 3. MSSQL 초기 DB 생성 (최초 1회)
+
+1. DBA 계정으로 SSMS에서 SQL Server에 연결합니다.
+2. `database/00_create_database.sql`을 실행해 `CourtMate` 데이터베이스를 생성합니다(기존 DB 사용 시 생략).
+3. SSMS에서 **CourtMate 데이터베이스를 선택**한 다음 `database/01_schema.sql`을 실행합니다.
+4. `database/02_verify.sql`로 테이블 4개와 건수를 검증합니다.
+5. 운영 API 전용 SQL 로그인/DB 사용자를 별도로 발급해 데이터 읽기·수정 권한만 부여합니다(DDL은 DBA 전용). 최소 권한 원칙을 적용하세요.
+
+`01_schema.sql`은 **신규/빈 DB 기준**입니다. 기존 이름이 같은 다른 테이블이 있을 때에는 무작정 실행하지 말고 실제 스키마부터 확인하세요. **이 스크립트는 DROP 문을 사용하지 않습니다.**
+
+### 신규 데이터베이스 테이블
+
+- `members`: 기존 회원 데이터 구조(가입일, 이름, 연락처, NTRP, 활동/휴면 등)
+- `sessions`: 날짜별 대진 모임 + 요청 중복 방지용 `request_key`, `request_hash`
+- `matches`: 경기/코트/라운드/선수/점수 + `score_version`(낙관적 동시 수정 감지)
+- `match_score_history`: 변경 전후 점수·버전·시각 기록. 사용자는 인증 기능 도입 후 기록하도록 확장 가능
+
+## 4. Python API 서버 실행
+
+PowerShell 예시(프로젝트 루트에서 실행):
+
+```powershell
+cd backend
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+# .env를 열어 MSSQL_HOST / MSSQL_DATABASE / MSSQL_USER / MSSQL_PASSWORD 설정
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+macOS/Linux:
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with actual SQL Server credentials.
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+`.env` 비밀번호를 Git에 추가하지 마세요. SQL Server Driver 18의 기본 암호화 설정(`MSSQL_ENCRYPT=yes`)을 사용하며, 자체 서명 인증서 등을 써야 한다면 실제 인프라 정책에 맞춰 `MSSQL_TRUST_SERVER_CERTIFICATE`를 신중하게 설정하세요.
+
+- 서버 상태: <http://127.0.0.1:8000/api/health>
+- 자동 API 문서: <http://127.0.0.1:8000/api/docs>
+
+## 5. React 실행 (기존 화면 그대로)
+
+**별도 터미널**을 열고 프로젝트 루트에서:
+
+```bash
+npm ci
+npm run dev
+```
+
+브라우저에서 Vite가 표시한 로컬 주소(기본 `http://localhost:5173`)로 접속합니다. `vite.config.ts`는 기본적으로 `/api/*`를 `http://127.0.0.1:8000`에 전달합니다.
+
+- 개발 API 서버 주소 변경: 루트의 `.env.example`을 `.env`로 복사한 뒤 `VITE_API_PROXY_TARGET=http://host:port` 변경
+- 프로덕션에서 같은 호스트로 서비스할 때는 프록시를 구성해 `/api`를 FastAPI로 전달
+- API 서버가 별도 도메인에 있는 경우 빌드 시 `VITE_API_BASE_URL=https://api.example.com/api` 설정 후 **FastAPI `CORS_ORIGINS`에 해당 프론트엔드 Origin만 허용**
+
+Vite `npm run build`는 `dist/` 정적 파일을 생성합니다. 실제 운영 전 인증 기능 및 프록시 설정을 완료해야 합니다.
+
+## 6. 기존 PostgreSQL 운영 데이터 이전 (선택)
+
+원본 ZIP은 **소스코드만 포함**하며 회원·모임·경기의 실제 DB 레코드는 포함되어 있지 않습니다. 기존 Netlify 서비스에서 데이터를 사용 중이라면 **이전 서비스를 종료하지 말고 먼저 내보내기**를 진행하세요.
+
+1. 기존 서비스(원본 Hono API)에 접근 가능한 상태에서 다음 명령을 실행합니다.
+
+```bash
+mkdir -p exports
+node tools/export-legacy.mjs https://OLD-SERVICE.example.com exports/legacy.json
+```
+
+2. 작성된 JSON 파일에는 **회원 연락처 등 개인정보가 포함**됩니다. 비공개로 보관하고 외부에 공유하지 마세요.
+3. 빈 MSSQL DB에 위의 `01_schema.sql`을 실행합니다.
+4. Python 환경변수/`.env`를 설정한 뒤 실제 DB 반영 전 `--dry-run`으로 JSON을 검증합니다.
+
+```bash
+python tools/import-legacy-json.py exports/legacy.json --dry-run
+python tools/import-legacy-json.py exports/legacy.json
+```
+
+5. `database/02_verify.sql`과 `/api/members`·`/api/sessions`·`/api/matches` 건수를 비교합니다.
+
+가져오기 도구는 **기존 회원·모임·경기 PK(id)를 그대로 보존**하며 대상 테이블에 데이터가 있으면 가져오기를 거부합니다. 외래키 불일치·기존 원본의 중복 코트처럼 DB 제약 위반 레코드가 있으면 전체 트랜잭션이 실패할 수 있으므로 원본 데이터를 수정/정리한 다음 다시 시도해야 합니다. JSON은 새 버전의 점수 수정 이력이 없으므로 `score_version=0`으로 가져옵니다.
+
+## 7. 테스트
+
+API 계약 및 업무 규칙 회귀 테스트는 **실제 SQL Server가 아닌 SQLite 임시 DB**를 이용합니다. 테스트는 운영 DB를 수정하지 않습니다.
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+테스트 항목: 회원 CRUD, 조회 형식, 잘못된 입력, 복식/단식 대진 생성, 코트/라운드/선수 중복 차단, 휴면 회원 제한, 요청 중복 방지, 점수 변경 이력, 동시 수정 409 충돌, 점수 범위, 라운드 삭제와 재번호 부여, 전체 삭제 캐스케이드, 저장 실패 시 트랜잭션 롤백.
+
+추가로 React에서 `npm run typecheck`, `npm run build`를 수행하고 실제 SQL Server에서 최소 다음 작업을 검증해야 합니다: 서버 `/api/health` → 회원 4명 등록 → 복식 대진 저장 → 점수 입력 → 공동 순위 → 라운드 삭제 → 기록 보존 및 복구 가능성 점검.
+
+## 8. 현재 범위 밖(실서비스 전 필요한 후속 개발)
+
+- 로그인·역할별 권한(관리자/일반 회원), 세션 만료, 개인정보 접근 제한
+- 모임별 정식 출석 테이블, 경기 상태(예정/진행/완료/중단), 진행 중 선수 다음 라운드 제외
+- 관리자 주도 **라운드별 추가 생성**, 파트너 최대 반복 횟수 등 제약 강화
+- 자동 대진의 서버 측 공정성 검증/재계산(현재는 기존 React 알고리즘 + Python 서버의 데이터 정합성 검증)
+- `0~6` 점수 범위 같은 별도 확정 운영 정책 반영(현재는 **기존 0~99 입력 호환 유지**)
+- 백업/복구 리허설, 공개 서비스 인증, 실제 SQL Server 부하/동시성 테스트
+
+기존 Netlify/Hono/Drizzle 백엔드 전체 소스는 **`legacy/`**에 보존돼 있으나 현재 실행 경로에서는 사용하지 않습니다. 새 개발은 `backend/app/`과 `database/`에서 진행하세요.
